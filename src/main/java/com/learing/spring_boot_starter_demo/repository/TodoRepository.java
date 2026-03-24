@@ -12,4 +12,6 @@ public interface TodoRepository extends JpaRepository<Todo, Long> {
     List<Todo> findByCompleted(Boolean completed);
 
     List<Todo> findByTitleContainingIgnoreCase(String title);
+
+    boolean existsByTitleIgnoreCase(String title);
 }
