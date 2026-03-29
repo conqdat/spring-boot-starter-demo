@@ -76,6 +76,40 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle custom BusinessException
+     */
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<Map<String, Object>> handleBusinessException(
+            BusinessException ex, WebRequest request) {
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("timestamp", LocalDateTime.now());
+        response.put("status", HttpStatus.BAD_REQUEST.value());
+        response.put("error", "Bad Request");
+        response.put("message", ex.getMessage());
+        response.put("path", request.getContextPath());
+
+        return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handle custom DuplicateResourceException
+     */
+    @ExceptionHandler(DuplicateResourceException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicateResourceException(
+            DuplicateResourceException ex, WebRequest request) {
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("timestamp", LocalDateTime.now());
+        response.put("status", HttpStatus.CONFLICT.value());
+        response.put("error", "Conflict");
+        response.put("message", ex.getMessage());
+        response.put("path", request.getContextPath());
+
+        return new ResponseEntity<>(response, HttpStatus.CONFLICT);
+    }
+
+    /**
      * Handle generic exceptions
      */
     @ExceptionHandler(Exception.class)

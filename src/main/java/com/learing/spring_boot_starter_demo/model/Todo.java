@@ -7,6 +7,7 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -35,10 +36,44 @@ public class Todo {
     @Builder.Default
     private Boolean completed = false;
 
+    @Column(name = "due_date")
+    private LocalDate dueDate;
+
+    @Column(length = 50)
+    private String priority;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assigned_user_id")
+    @Setter
+    private User assignedUser;
+
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    /**
+     * Check if this todo is overdue (past due date and not completed)
+     */
+    public boolean isOverdue() {
+        return dueDate != null && !completed && LocalDate.now().isAfter(dueDate);
+    }
+
+    /**
+     * Check if this todo is due today
+     */
+    public boolean isDueToday() {
+        return dueDate != null && LocalDate.now().isEqual(dueDate);
+    }
+
+    /**
+     * Check if this todo is upcoming (due within next 7 days)
+     */
+    public boolean isUpcoming() {
+        if (dueDate == null || completed) return false;
+        return LocalDate.now().isBefore(dueDate) &&
+               dueDate.isBefore(LocalDate.now().plusDays(7));
+    }
 }
