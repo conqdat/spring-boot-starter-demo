@@ -1,11 +1,13 @@
 package com.learing.spring_boot_starter_demo.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.learing.spring_boot_starter_demo.model.enums.Priority;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -25,8 +27,9 @@ public class TodoRequest {
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate dueDate;
 
-    @Size(max = 50, message = "Priority cannot exceed 50 characters")
-    private String priority;
+    private Priority priority;
 
     private Long assignedUserId;
+
+    private List<String> tagNames;
 }

@@ -2,10 +2,13 @@ package com.learing.spring_boot_starter_demo.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.learing.spring_boot_starter_demo.model.Todo;
+import com.learing.spring_boot_starter_demo.model.enums.Priority;
 import lombok.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Data
 @NoArgsConstructor
@@ -19,10 +22,12 @@ public class TodoResponse {
     private String description;
     private Boolean completed;
     private LocalDate dueDate;
-    private String priority;
+    private Priority priority;
     private UserInfo assignedUser;
     private Boolean isOverdue;
     private Boolean isDueToday;
+    private LocalDateTime completedAt;
+    private List<TagInfo> tags;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -37,10 +42,21 @@ public class TodoResponse {
                 .createdAt(todo.getCreatedAt())
                 .updatedAt(todo.getUpdatedAt())
                 .isOverdue(todo.isOverdue())
-                .isDueToday(todo.isDueToday());
+                .isDueToday(todo.isDueToday())
+                .completedAt(todo.getCompletedAt());
 
         if (todo.getAssignedUser() != null) {
             builder.assignedUser(UserInfo.fromUser(todo.getAssignedUser()));
+        }
+
+        if (todo.getTags() != null && !todo.getTags().isEmpty()) {
+            builder.tags(todo.getTags().stream()
+                    .map(tag -> TagInfo.builder()
+                            .id(tag.getId())
+                            .name(tag.getName())
+                            .color(tag.getColor())
+                            .build())
+                    .collect(Collectors.toList()));
         }
 
         return builder.build();
@@ -65,5 +81,18 @@ public class TodoResponse {
                     .email(user.getEmail())
                     .build();
         }
+    }
+
+    /**
+     * Nested class for representing tag info in todo response
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class TagInfo {
+        private Long id;
+        private String name;
+        private String color;
     }
 }

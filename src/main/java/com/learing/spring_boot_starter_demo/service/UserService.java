@@ -2,10 +2,12 @@ package com.learing.spring_boot_starter_demo.service;
 
 import com.learing.spring_boot_starter_demo.dto.UserRequest;
 import com.learing.spring_boot_starter_demo.dto.UserResponse;
+import com.learing.spring_boot_starter_demo.event.UserRegisteredEvent;
 import com.learing.spring_boot_starter_demo.exception.ResourceNotFoundException;
 import com.learing.spring_boot_starter_demo.model.User;
 import com.learing.spring_boot_starter_demo.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -20,6 +22,7 @@ import java.util.stream.Collectors;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Get all users with pagination
@@ -71,6 +74,10 @@ public class UserService {
                 .build();
 
         User savedUser = userRepository.save(user);
+
+        // Publish event — triggers welcome email via NotificationEventListener
+        eventPublisher.publishEvent(new UserRegisteredEvent(this, savedUser));
+
         return UserResponse.fromUserWithoutTodos(savedUser);
     }
 

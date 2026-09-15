@@ -2,6 +2,7 @@ package com.learing.spring_boot_starter_demo.controller;
 
 import com.learing.spring_boot_starter_demo.dto.TodoRequest;
 import com.learing.spring_boot_starter_demo.dto.TodoResponse;
+import com.learing.spring_boot_starter_demo.model.enums.Priority;
 import com.learing.spring_boot_starter_demo.service.TodoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/todos")
+@RequestMapping("/api/v1/todos")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class TodoController {
@@ -111,7 +112,7 @@ public class TodoController {
      */
     @GetMapping("/priority/{priority}")
     public ResponseEntity<List<TodoResponse>> getTodosByPriority(
-            @PathVariable String priority) {
+            @PathVariable Priority priority) {
         List<TodoResponse> todos = todoService.getTodosByPriority(priority);
         return ResponseEntity.ok(todos);
     }
@@ -267,8 +268,8 @@ public class TodoController {
     @PutMapping("/user/{userId}/priority")
     public ResponseEntity<Integer> updatePriorityForUser(
             @PathVariable Long userId,
-            @RequestParam String priority) {
-        int count = todoService.updatePriorityForUserTodos(userId, priority);
+            @RequestParam Priority priority) {
+        int count = todoService.updatePriorityForUserTodos(userId, priority.name());
         return ResponseEntity.ok(count);
     }
 

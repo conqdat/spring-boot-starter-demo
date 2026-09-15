@@ -1,6 +1,7 @@
 package com.learing.spring_boot_starter_demo.repository;
 
 import com.learing.spring_boot_starter_demo.model.Todo;
+import com.learing.spring_boot_starter_demo.model.enums.Priority;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -35,7 +36,7 @@ public interface TodoRepository extends JpaRepository<Todo, Long>, JpaSpecificat
     /**
      * Find todos by priority
      */
-    List<Todo> findByPriority(String priority);
+    List<Todo> findByPriority(Priority priority);
 
     /**
      * Find todos by due date
@@ -86,7 +87,7 @@ public interface TodoRepository extends JpaRepository<Todo, Long>, JpaSpecificat
     /**
      * Find todos by priority with pagination
      */
-    Page<Todo> findByPriority(String priority, Pageable pageable);
+    Page<Todo> findByPriority(Priority priority, Pageable pageable);
 
     /**
      * Find todos by user with pagination

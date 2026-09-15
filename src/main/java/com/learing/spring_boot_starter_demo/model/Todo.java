@@ -9,6 +9,9 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
+import com.learing.spring_boot_starter_demo.model.enums.Priority;
 
 @Entity
 @Table(name = "todos")
@@ -39,8 +42,19 @@ public class Todo {
     @Column(name = "due_date")
     private LocalDate dueDate;
 
-    @Column(length = 50)
-    private String priority;
+    @Enumerated(EnumType.STRING)
+    private Priority priority;
+
+    @ManyToMany
+    @JoinTable(
+        name = "todo_tags",
+        joinColumns = @JoinColumn(name = "todo_id"),
+        inverseJoinColumns = @JoinColumn(name = "tag_id")
+    )
+    @Builder.Default
+    private Set<Tag> tags = new HashSet<>();
+
+    private LocalDateTime completedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assigned_user_id")

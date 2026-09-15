@@ -5,6 +5,12 @@ spring:
     password: postgres
     driver-class-name: org.postgresql.Driver
 
+  mail:
+    host: localhost
+    port: 2525
+    username: test
+    password: test
+
   jpa:
     hibernate:
       ddl-auto: update

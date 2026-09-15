@@ -2,13 +2,21 @@ package com.learing.spring_boot_starter_demo.service;
 
 import com.learing.spring_boot_starter_demo.dto.TodoRequest;
 import com.learing.spring_boot_starter_demo.dto.TodoResponse;
+import com.learing.spring_boot_starter_demo.event.TodoCompletedEvent;
+import com.learing.spring_boot_starter_demo.event.TodoCreatedEvent;
+import com.learing.spring_boot_starter_demo.exception.BusinessException;
 import com.learing.spring_boot_starter_demo.exception.ResourceNotFoundException;
+import com.learing.spring_boot_starter_demo.model.Tag;
 import com.learing.spring_boot_starter_demo.model.Todo;
 import com.learing.spring_boot_starter_demo.model.User;
+import com.learing.spring_boot_starter_demo.model.enums.Priority;
 import com.learing.spring_boot_starter_demo.repository.TodoRepository;
 import com.learing.spring_boot_starter_demo.repository.UserRepository;
 import com.learing.spring_boot_starter_demo.specification.TodoSpecification;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -17,9 +25,12 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,6 +40,15 @@ public class TodoService {
 
     private final TodoRepository todoRepository;
     private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
+    private final TagService tagService;
+    private final EmailService emailService;
+    private final Clock clock;
+
+    // ============ Constants for Business Rules ============
+
+    private static final int MAX_PENDING_TODOS_PER_USER = 50;
+    private static final int REOPEN_WINDOW_DAYS = 7;
 
     // ============ Basic CRUD Operations ============
 
@@ -52,9 +72,10 @@ public class TodoService {
     }
 
     /**
-     * Get todo by ID
+     * Get todo by ID (cached)
      */
     @Transactional(readOnly = true)
+    @Cacheable(value = "todos", key = "#id")
     public TodoResponse getTodoById(Long id) {
         Todo todo = todoRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Todo not found with id: " + id));
@@ -62,9 +83,12 @@ public class TodoService {
     }
 
     /**
-     * Create a new todo
+     * Create a new todo with business rule validation
      */
     public TodoResponse createTodo(TodoRequest request) {
+        // Business Rule 1: Cannot create todo with due date in the past
+        validateDueDate(request.getDueDate());
+
         Todo todo = Todo.builder()
                 .title(request.getTitle())
                 .description(request.getDescription())
@@ -78,25 +102,46 @@ public class TodoService {
             User user = userRepository.findById(request.getAssignedUserId())
                     .orElseThrow(() -> new ResourceNotFoundException(
                             "User not found with id: " + request.getAssignedUserId()));
+
+            // Business Rule 3: Max 50 pending todos per user
+            validatePendingTodoLimit(user.getId());
+
             todo.setAssignedUser(user);
         }
 
+        // Handle tags
+        if (request.getTagNames() != null && !request.getTagNames().isEmpty()) {
+            Set<Tag> tags = tagService.findOrCreateTags(request.getTagNames());
+            todo.setTags(tags);
+        }
+
         Todo savedTodo = todoRepository.save(todo);
+
+        // Publish event (triggers email notification if assigned)
+        eventPublisher.publishEvent(new TodoCreatedEvent(this, savedTodo));
+
         return TodoResponse.fromEntity(savedTodo);
     }
 
     /**
      * Update an existing todo
      */
+    @CacheEvict(value = "todos", key = "#id")
     public TodoResponse updateTodo(Long id, TodoRequest request) {
         Todo todo = todoRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Todo not found with id: " + id));
 
+        // Validate due date if being changed
+        if (request.getDueDate() != null && !request.getDueDate().equals(todo.getDueDate())) {
+            validateDueDate(request.getDueDate());
+        }
+
         todo.setTitle(request.getTitle());
         todo.setDescription(request.getDescription());
 
+        // Business Rule 4 & 5: Handle completion/reopening logic
         if (request.getCompleted() != null) {
-            todo.setCompleted(request.getCompleted());
+            handleCompletionChange(todo, request.getCompleted());
         }
 
         if (request.getDueDate() != null) {
@@ -114,8 +159,13 @@ public class TodoService {
                             "User not found with id: " + request.getAssignedUserId()));
             todo.setAssignedUser(user);
         } else if (request.getAssignedUserId() == null && todo.getAssignedUser() != null) {
-            // If explicitly set to null, unassign the user
             todo.setAssignedUser(null);
+        }
+
+        // Handle tags
+        if (request.getTagNames() != null) {
+            Set<Tag> tags = tagService.findOrCreateTags(request.getTagNames());
+            todo.setTags(tags);
         }
 
         Todo updatedTodo = todoRepository.save(todo);
@@ -125,11 +175,63 @@ public class TodoService {
     /**
      * Delete a todo
      */
+    @CacheEvict(value = "todos", key = "#id")
     public void deleteTodo(Long id) {
         if (!todoRepository.existsById(id)) {
             throw new ResourceNotFoundException("Todo not found with id: " + id);
         }
         todoRepository.deleteById(id);
+    }
+
+    // ============ Business Rule Methods ============
+
+    /**
+     * Business Rule 1: Cannot create todo with due date in the past
+     */
+    private void validateDueDate(LocalDate dueDate) {
+        if (dueDate != null && dueDate.isBefore(LocalDate.now(clock))) {
+            throw new BusinessException("Due date cannot be in the past");
+        }
+    }
+
+    /**
+     * Business Rule 3: Each user can have at most MAX_PENDING_TODOS_PER_USER uncompleted todos
+     */
+    private void validatePendingTodoLimit(Long userId) {
+        long pendingCount = todoRepository.countPendingByUserId(userId);
+        if (pendingCount >= MAX_PENDING_TODOS_PER_USER) {
+            throw new BusinessException(
+                String.format("User has reached the maximum limit of %d pending todos", MAX_PENDING_TODOS_PER_USER));
+        }
+    }
+
+    /**
+     * Business Rule 4 & 5: Handle completion state changes
+     * - When marking as completed: set completedAt timestamp
+     * - When reopening: check if completed more than REOPEN_WINDOW_DAYS days ago
+     */
+    private void handleCompletionChange(Todo todo, boolean newCompleted) {
+        boolean wasCompleted = Boolean.TRUE.equals(todo.getCompleted());
+
+        if (!wasCompleted && newCompleted) {
+            // Marking as completed
+            todo.setCompleted(true);
+            todo.setCompletedAt(LocalDateTime.now(clock));
+            eventPublisher.publishEvent(new TodoCompletedEvent(this, todo, "system"));
+        } else if (wasCompleted && !newCompleted) {
+            // Reopening — check if allowed
+            if (todo.getCompletedAt() != null) {
+                LocalDateTime reopenDeadline = todo.getCompletedAt().plusDays(REOPEN_WINDOW_DAYS);
+                if (LocalDateTime.now(clock).isAfter(reopenDeadline)) {
+                    throw new BusinessException(
+                        String.format("Cannot reopen todo — it was completed more than %d days ago", REOPEN_WINDOW_DAYS));
+                }
+            }
+            todo.setCompleted(false);
+            todo.setCompletedAt(null);
+        } else {
+            todo.setCompleted(newCompleted);
+        }
     }
 
     // ============ Filtering and Search Operations ============
@@ -157,7 +259,7 @@ public class TodoService {
      * Get todos by priority
      */
     @Transactional(readOnly = true)
-    public List<TodoResponse> getTodosByPriority(String priority) {
+    public List<TodoResponse> getTodosByPriority(Priority priority) {
         return todoRepository.findByPriority(priority).stream()
                 .map(TodoResponse::fromEntity)
                 .collect(Collectors.toList());
@@ -178,7 +280,7 @@ public class TodoService {
      */
     @Transactional(readOnly = true)
     public List<TodoResponse> getOverdueTodos() {
-        return todoRepository.findOverdueTodos(LocalDate.now()).stream()
+        return todoRepository.findOverdueTodos(LocalDate.now(clock)).stream()
                 .map(TodoResponse::fromEntity)
                 .collect(Collectors.toList());
     }
@@ -188,7 +290,7 @@ public class TodoService {
      */
     @Transactional(readOnly = true)
     public List<TodoResponse> getTodosDueToday() {
-        return todoRepository.findTodosDueToday(LocalDate.now()).stream()
+        return todoRepository.findTodosDueToday(LocalDate.now(clock)).stream()
                 .map(TodoResponse::fromEntity)
                 .collect(Collectors.toList());
     }
@@ -198,7 +300,8 @@ public class TodoService {
      */
     @Transactional(readOnly = true)
     public List<TodoResponse> getUpcomingTodos() {
-        return todoRepository.findUpcomingTodos(LocalDate.now(), LocalDate.now().plusDays(7)).stream()
+        LocalDate today = LocalDate.now(clock);
+        return todoRepository.findUpcomingTodos(today, today.plusDays(7)).stream()
                 .map(TodoResponse::fromEntity)
                 .collect(Collectors.toList());
     }
@@ -248,14 +351,6 @@ public class TodoService {
 
     /**
      * Search todos using specifications (dynamic filtering)
-     *
-     * Example usage:
-     * Map<String, Object> filters = Map.of(
-     *     "title", "meeting",
-     *     "completed", false,
-     *     "priority", "HIGH"
-     * );
-     * Page<TodoResponse> results = todoService.searchTodos(filters, PageRequest.of(0, 10));
      */
     @Transactional(readOnly = true)
     public Page<TodoResponse> searchTodos(Map<String, Object> filters, Pageable pageable) {
@@ -309,8 +404,8 @@ public class TodoService {
      * Mark all todos as completed for a user
      */
     @Transactional
+    @CacheEvict(value = {"todos", "stats"}, allEntries = true)
     public int markAllTodosAsCompletedForUser(Long userId) {
-        // Verify user exists
         if (!userRepository.existsById(userId)) {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
@@ -321,8 +416,8 @@ public class TodoService {
      * Delete all todos for a user
      */
     @Transactional
+    @CacheEvict(value = {"todos", "stats"}, allEntries = true)
     public int deleteAllTodosForUser(Long userId) {
-        // Verify user exists
         if (!userRepository.existsById(userId)) {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
@@ -333,8 +428,8 @@ public class TodoService {
      * Bulk update priority for a user's todos
      */
     @Transactional
+    @CacheEvict(value = {"todos", "stats"}, allEntries = true)
     public int updatePriorityForUserTodos(Long userId, String priority) {
-        // Verify user exists
         if (!userRepository.existsById(userId)) {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
@@ -348,7 +443,6 @@ public class TodoService {
      */
     @Transactional(readOnly = true)
     public TodoStats getUserTodoStats(Long userId) {
-        // Verify user exists
         if (!userRepository.existsById(userId)) {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
@@ -356,7 +450,7 @@ public class TodoService {
         long total = todoRepository.countByUserId(userId);
         long completed = todoRepository.countCompletedByUserId(userId);
         long pending = todoRepository.countPendingByUserId(userId);
-        long overdue = todoRepository.findOverdueTodos(LocalDate.now()).stream()
+        long overdue = todoRepository.findOverdueTodos(LocalDate.now(clock)).stream()
                 .filter(t -> t.getAssignedUser() != null && t.getAssignedUser().getId().equals(userId))
                 .count();
 
@@ -371,15 +465,16 @@ public class TodoService {
     }
 
     /**
-     * Get global todo statistics
+     * Get global todo statistics (cached)
      */
     @Transactional(readOnly = true)
+    @Cacheable(value = "stats", key = "'global'")
     public GlobalTodoStats getGlobalTodoStats() {
         long totalTodos = todoRepository.count();
         long completedTodos = todoRepository.findByCompleted(true).size();
         long pendingTodos = todoRepository.findByCompleted(false).size();
-        long overdueTodos = todoRepository.findOverdueTodos(LocalDate.now()).size();
-        long dueToday = todoRepository.findTodosDueToday(LocalDate.now()).size();
+        long overdueTodos = todoRepository.findOverdueTodos(LocalDate.now(clock)).size();
+        long dueToday = todoRepository.findTodosDueToday(LocalDate.now(clock)).size();
 
         return GlobalTodoStats.builder()
                 .totalTodos(totalTodos)
